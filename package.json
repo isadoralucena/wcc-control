@@ -1,0 +1,29 @@
+{
+  "name": "wcc-control",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "WCC — gerenciamento de competições de programação e controle de balões",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p . && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "gateway:bundle": "esbuild gateway/worker.js --bundle --format=esm --platform=neutral --legal-comments=inline --outfile=gateway/dist/wcc-gateway.js",
+    "gateway:dev": "cd gateway && npx -y wrangler@3.90.0 dev --port 8787",
+    "lcc:snapshot": "node scripts/lcc-snapshot.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "0.460.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "typescript": "5.6.3",
+    "vite": "5.4.11",
+    "vitest": "2.1.5"
+  }
+}
