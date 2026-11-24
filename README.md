@@ -9,6 +9,38 @@ Sistema web para organizar competições de programação: configura participant
 3. **VJudge:** configuração do contest e do gateway, importação de questões e atualização automática das submissões.
 4. **Arena:** acompanhamento de participantes e questões, fila de balões, notificações e estatísticas.
 
+## Telas
+
+> Exemplos com uma competição fictícia: 30 participantes em 10 trios, distribuídos no LCC1 e no LCC2, com um contest de 8 questões em andamento.
+
+### Arena
+
+Placar por equipe e questão, fila de balões pendentes com a localização de cada equipe e linha do tempo dos Accepted e entregas.
+
+![Arena com placar, fila de balões e linha do tempo](docs/screenshots/arena.png)
+
+### Mapa de sala
+
+Distribuição automática nas bancadas do LCC: cada equipe ocupa cadeiras vizinhas e usa o computador do meio, com espaçamento entre equipes.
+
+![Mapa de sala com as equipes distribuídas no LCC1](docs/screenshots/mapa.png)
+
+### Configuração
+
+Seleção dos laboratórios a partir da planta do site do LCC, com computadores marcados como indisponíveis:
+
+![Seleção de laboratórios](docs/screenshots/laboratorios.png)
+
+Formação das equipes, pela ordem da lista ou aleatoriamente, com ajustes manuais:
+
+![Formação das equipes](docs/screenshots/equipes.png)
+
+### VJudge
+
+Contest, conexão com o WCC Gateway (login automático na conta da organização) e cores dos balões de cada questão.
+
+![Configuração do contest no VJudge](docs/screenshots/vjudge.png)
+
 ## Integrações
 
 ### LCC/UFCG
