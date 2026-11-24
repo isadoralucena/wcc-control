@@ -19,7 +19,9 @@ A planta dos laboratórios é obtida automaticamente e também possui um snapsho
 
 ### VJudge
 
-O VJudge também é consultado pelo WCC Gateway, responsável por contornar a restrição de CORS e centralizar o acesso ao contest. Concursos privados podem exigir uma sessão autenticada e a senha do contest, configuradas como secrets no Cloudflare.
+O VJudge também é consultado pelo WCC Gateway, responsável por contornar a restrição de CORS e centralizar o acesso ao contest. O VJudge não tem API oficial; o gateway usa os mesmos endpoints internos do site.
+
+Para contests privados, o gateway faz login sozinho com uma conta da organização (secrets `VJUDGE_USERNAME` e `VJUDGE_ACCOUNT_PASSWORD`), guarda a sessão no Workers KV e a renova quando expira — não é preciso copiar cookies. Se a conta for gerente do contest, a senha do contest é dispensada; caso contrário, o organizador a informa uma vez na tela **VJudge**. Se o VJudge exigir verificação humana no login, o gateway não a contorna: o aviso aparece no app e a importação por JSON continua disponível.
 
 A sincronização ocorre automaticamente, sem remover resultados já registrados ou alterar entregas de balões. Se a integração falhar, é possível importar o ranking por JSON e registrar Accepted manualmente.
 
@@ -61,7 +63,7 @@ npm run gateway:dev
 1. Crie um Worker em **Cloudflare → Workers & Pages**.
 2. Publique o conteúdo de `gateway/dist/wcc-gateway.js`.
 3. Configure a URL do Worker nas variáveis do GitHub Actions.
-4. Configure os secrets necessários para o acesso ao VJudge, quando o contest exigir autenticação.
+4. Para contests privados: crie o KV `WCC_KV`, os secrets `VJUDGE_USERNAME` e `VJUDGE_ACCOUNT_PASSWORD` e a variável `ALLOWED_ORIGINS` com a URL do GitHub Pages.
 5. Na aplicação, acesse **VJudge → Testar conexão** para verificar a integração.
 
 Consulte [`gateway/README.md`](gateway/README.md) para as instruções detalhadas de configuração do gateway.
