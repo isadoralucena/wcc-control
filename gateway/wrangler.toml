@@ -9,5 +9,13 @@ compatibility_date = "2024-11-01"
 # para contests privados, liste explicitamente a URL do seu GitHub Pages.
 ALLOWED_ORIGINS = "*"
 
-# Contests privados (opcional) — defina como segredo, nunca aqui:
-#   npx wrangler secret put VJUDGE_COOKIE
+# Contests privados — conta da organização (defina como segredos, nunca aqui):
+#   npx wrangler secret put VJUDGE_USERNAME
+#   npx wrangler secret put VJUDGE_ACCOUNT_PASSWORD
+# e liste a origem do app em ALLOWED_ORIGINS (ex.: "https://<usuario>.github.io").
+#
+# Sessão persistente: crie o namespace (npx wrangler kv namespace create wcc-gateway)
+# e descomente com o id devolvido:
+# [[kv_namespaces]]
+# binding = "WCC_KV"
+# id = "<id-do-namespace>"

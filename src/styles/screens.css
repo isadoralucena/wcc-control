@@ -1051,3 +1051,81 @@
 .syncstatus.is-warn svg {
   margin-top: 2px;
 }
+
+.authcard {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 0.86rem;
+}
+.authcard.is-ok {
+  box-shadow: inset 3px 0 0 var(--green), inset 0 0 0 1px var(--line);
+}
+.authcard.is-warn {
+  box-shadow: inset 3px 0 0 var(--warn), inset 0 0 0 1px var(--line);
+}
+.authcard__icon {
+  color: var(--muted);
+  margin-top: 1px;
+}
+.authcard.is-ok .authcard__icon {
+  color: var(--green-ink);
+}
+.authcard.is-warn .authcard__icon {
+  color: var(--warn);
+}
+.authcard__body {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.authcard__body span {
+  color: var(--ink-2);
+}
+.enter {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--r);
+  background: var(--warn-soft);
+  border-left: 3px solid var(--warn);
+}
+.enter__text {
+  margin: 0;
+  font-size: 0.88rem;
+}
+.enter__form {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.enter__form .field {
+  flex: 1 1 240px;
+}
+.enter__hint,
+.enter__msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+.enter__msg.is-ok {
+  color: var(--green-ink);
+}
+.enter__msg.is-bad {
+  color: #a3322f;
+}
+@media (max-width: 640px) {
+  .authcard {
+    flex-wrap: wrap;
+  }
+  .enter__form .btn {
+    width: 100%;
+  }
+}

@@ -63,7 +63,7 @@ describe('gateway: contest privado', () => {
     expect(text).not.toContain('supersecreto');
     expect(text).not.toContain('senha-secreta');
     const d = JSON.parse(text);
-    expect(d.config).toMatchObject({ cookieConfigured: true, cookieUsedForThisRequest: false, accessCodeVariable: 'CONTEST_PASSWORD' });
+    expect(d.config).toMatchObject({ cookieConfigured: true, sessionUsedForThisRequest: false, accessCodeVariable: 'CONTEST_PASSWORD' });
     expect(d.hints.join(' ')).toContain('ALLOWED_ORIGINS');
   });
 });

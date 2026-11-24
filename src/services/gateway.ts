@@ -17,31 +17,41 @@ export function gatewayUrl(state: Pick<AppState, 'gatewayUrl'>): string {
   return (state.gatewayUrl.trim() || BUILD_GATEWAY_URL).replace(/\/+$/, '');
 }
 
-async function getJson(base: string, path: string): Promise<unknown> {
+const getJson = (base: string, path: string) => request(base, path);
+const postJson = (base: string, path: string, body: object) => request(base, path, body);
+
+async function request(base: string, path: string, body?: object): Promise<unknown> {
   if (!base) throw new GatewayError('Gateway não configurado.');
   const ctrl = new AbortController();
   const timer = window.setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, { signal: ctrl.signal, cache: 'no-store' });
+    res = await fetch(
+      `${base}${path}`,
+      body
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store' }
+        : { signal: ctrl.signal, cache: 'no-store' },
+    );
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw new GatewayError('Tempo esgotado ao consultar o gateway.');
     throw new GatewayError(navigator.onLine ? 'Sem resposta do gateway (URL incorreta, fora do ar ou origem não permitida).' : 'Sem conexão com a internet.');
   } finally {
     window.clearTimeout(timer);
   }
-  let body: unknown = null;
+  let data: unknown = null;
   try {
-    body = JSON.parse(await res.text());
+    data = JSON.parse(await res.text());
   } catch {
     /* corpo não-JSON */
   }
+  // POST /enter devolve o motivo da recusa no corpo (409/429/403): repassa para a interface.
+  if (!res.ok && body && data && typeof data === 'object' && 'reason' in data) return data;
   if (!res.ok) {
-    const msg = body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : res.statusText;
+    const msg = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : res.statusText;
     throw new GatewayError(`Gateway ${res.status}: ${msg || 'erro'}`);
   }
-  if (body === null) throw new GatewayError('O gateway não devolveu JSON.');
-  return body;
+  if (data === null) throw new GatewayError('O gateway não devolveu JSON.');
+  return data;
 }
 
 export const gateway = {
@@ -53,22 +63,62 @@ export const gateway = {
   },
   rank: (base: string, id: string) => getJson(base, `/vjudge/rank/${encodeURIComponent(id)}`),
   contest: (base: string, id: string) => getJson(base, `/vjudge/contest/${encodeURIComponent(id)}`),
+  /** Gateway ≥ 2.2: estado da conta do VJudge usada pelo gateway. `force` refaz o login. */
+  auth: (base: string, force = false) => getJson(base, `/vjudge/auth${force ? '?force=1' : ''}`) as Promise<GatewayAuth>,
+  /** Gateway ≥ 2.2: entra no contest com a senha digitada pelo organizador (não fica guardada no app). */
+  enter: (base: string, id: string, accessCode: string) => postJson(base, `/vjudge/enter/${encodeURIComponent(id)}`, { accessCode }) as Promise<EnterResult>,
   /** Gateway ≥ 2.1: diagnóstico de acesso (nunca devolve valores de segredos). */
   diag: (base: string, id: string) => getJson(base, `/vjudge/diag/${encodeURIComponent(id)}`) as Promise<GatewayDiag>,
 };
+
+export type AuthStatus = 'ok' | 'human_verification' | 'invalid_credentials' | 'error' | 'not_configured' | 'origin_not_allowed' | 'unknown';
+
+export interface GatewayAuth {
+  mode: 'account' | 'cookie' | 'none';
+  username?: string | null;
+  status: AuthStatus;
+  vjudge?: string | null;
+  lastLoginAt?: number | null;
+  retryAfter?: number | null;
+  persistentStore?: boolean;
+}
+
+export interface EnterResult {
+  ok: boolean;
+  reason?: string;
+  access?: 'public' | 'authorized' | 'restricted';
+  role?: 'manager' | null;
+  problems?: number | null;
+  retryAfter?: number;
+}
 
 export interface GatewayDiag {
   gateway: string;
   config: {
     allowedOrigins: string;
     requestOriginAllowedExplicitly: boolean;
+    authMode?: 'account' | 'cookie' | 'none';
+    persistentStore?: boolean;
     cookieConfigured: boolean;
-    cookieLooksValid: boolean;
-    cookieUsedForThisRequest: boolean;
+    sessionUsedForThisRequest?: boolean;
+    /** gateway 2.1 */
+    cookieUsedForThisRequest?: boolean;
     accessCodeConfigured: boolean;
     accessCodeVariable: string | null;
+    accessCodeFromApp?: boolean;
   };
-  contest?: { id?: number; title?: string; openness?: number; access?: 'public' | 'authorized' | 'restricted'; problemsVisible?: boolean; problems?: number | null; error?: string };
+  auth?: GatewayAuth;
+  contest?: {
+    id?: number;
+    title?: string;
+    openness?: number;
+    authStatus?: number | null;
+    access?: 'public' | 'authorized' | 'restricted';
+    role?: 'manager' | null;
+    problemsVisible?: boolean;
+    problems?: number | null;
+    error?: string;
+  };
   enterContest?: { attempted: boolean; ok?: boolean; vjudgeReason?: string | null };
   rank?: { participants: number; submissions: number; accepted: number; error?: string };
   hints: string[];

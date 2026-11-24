@@ -9,6 +9,7 @@ import { Notice, SectionHead, Stepper, formatTime } from '../components/ui';
 import { Balloon } from '../components/Balloon';
 import { buildProblems, contestUrl, parseContestId, parseContestInfo, parseRank, problemCountHint, rankUrl } from '../domain/vjudge';
 import { gateway, gatewayUrl } from '../services/gateway';
+import { AuthCard, EnterContest, authLabel, useGatewayAuth } from './vjudge/GatewayAuth';
 import { BUILD_GATEWAY_URL } from '../config';
 import { parseUsernameList, cleanUsername } from '../domain/participants';
 import { problemLetter } from '../domain/ids';
@@ -20,7 +21,9 @@ interface TestResult {
   lines: { ok: boolean | null; text: string }[];
 }
 
-const GATEWAY_MIN_VERSION = '2.1.0';
+/** Versão com diagnóstico (2.1) e com login automático da conta (2.2). */
+const GATEWAY_DIAG_VERSION = '2.1.0';
+const GATEWAY_MIN_VERSION = '2.2.0';
 const versionLt = (a: string, b: string) => {
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
@@ -62,6 +65,9 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
   const setV = (patch: Partial<VJudgeSettings>) => commit((s) => ({ ...s, vjudge: { ...s.vjudge, ...patch } }));
   const base = gatewayUrl(state);
   const [gwDraft, setGwDraft] = useState(state.gatewayUrl);
+  const [authReq, setAuthReq] = useState({ n: 0, force: false });
+  const refreshAuth = (force = false) => setAuthReq((r) => ({ n: r.n + 1, force }));
+  const auth = useGatewayAuth(base, authReq);
 
   const onContestInput = (text: string) => {
     const id = parseContestId(text) ?? '';
@@ -110,18 +116,19 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
       return `online, versão ${version}`;
     });
     if (online && versionLt(version, GATEWAY_MIN_VERSION))
-      push({ ok: null, text: `Gateway publicado está na versão ${version}. Publique a ${GATEWAY_MIN_VERSION} (gateway/dist/wcc-gateway.js) para contests privados e diagnóstico.` });
+      push({ ok: null, text: `Gateway publicado está na versão ${version}. Publique a ${GATEWAY_MIN_VERSION} (gateway/dist/wcc-gateway.js) para o login automático da conta do VJudge.` });
     await step('Site do LCC', async () => {
       const r = await gateway.labs(base);
       return r.labs.map((l) => `${l.id}=${l.machines}`).join(', ');
     });
     if (v.contestId && online) {
-      if (!versionLt(version, GATEWAY_MIN_VERSION)) {
+      if (!versionLt(version, GATEWAY_DIAG_VERSION)) {
         try {
           const d = await gateway.diag(base, v.contestId);
           const c = d.contest;
           if (c && !c.error) {
-            const acc = c.access === 'public' ? 'público' : c.access === 'authorized' ? 'privado · acesso autorizado' : 'privado · SEM acesso';
+            const acc =
+              c.access === 'public' ? 'público' : c.access === 'authorized' ? `privado · acesso autorizado${c.role === 'manager' ? ' (gerente)' : ''}` : 'privado · SEM acesso';
             push({ ok: c.access !== 'restricted', text: `Contest: "${c.title}" · ${acc} · ${c.problemsVisible ? `${c.problems} questões` : 'questões ocultas'}` });
             commit((s) => ({ ...s, vjudge: { ...s.vjudge, contestAccess: c.access ?? s.vjudge.contestAccess, contestTitle: c.title || s.vjudge.contestTitle } }));
           } else push({ ok: false, text: `Contest: ${c?.error ?? 'sem resposta'}` });
@@ -129,9 +136,18 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
             push({ ok: d.rank.participants > 0 || c?.access !== 'restricted' ? true : null, text: `Ranking: ${d.rank.participants} contas · ${d.rank.submissions} submissões (${d.rank.accepted} aceitas)` });
           else push({ ok: false, text: `Ranking: ${d.rank?.error ?? 'sem resposta'}` });
           const cfg = d.config;
+          const used = cfg.sessionUsedForThisRequest ?? cfg.cookieUsedForThisRequest;
+          const mode =
+            cfg.authMode === 'account'
+              ? `conta ${d.auth?.username ?? ''} (${authLabel(d.auth?.status)})`
+              : cfg.cookieConfigured
+                ? 'cookie copiado (legado)'
+                : 'nenhuma credencial';
           push({
             ok: null,
-            text: `Configuração do gateway: sessão (VJUDGE_COOKIE) ${cfg.cookieConfigured ? (cfg.cookieUsedForThisRequest ? 'em uso' : 'presente, mas não usada para esta origem') : 'ausente'} · senha do contest ${cfg.accessCodeConfigured ? `presente (${cfg.accessCodeVariable})` : 'ausente'}${d.enterContest?.attempted ? ` · entrada no contest: ${d.enterContest.ok ? 'ok' : d.enterContest.vjudgeReason}` : ''}`,
+            text: `Gateway: ${mode}${cfg.authMode && cfg.authMode !== 'none' && !used ? ' — não usada para esta origem' : ''} · senha do contest ${
+              cfg.accessCodeFromApp ? 'informada no app' : cfg.accessCodeConfigured ? `em segredo (${cfg.accessCodeVariable})` : 'não informada'
+            }${d.enterContest?.attempted ? ` · entrada no contest: ${d.enterContest.ok ? 'ok' : d.enterContest.vjudgeReason}` : ''}`,
           });
           d.hints.forEach((h) => push({ ok: null, text: h }));
         } catch (e) {
@@ -160,6 +176,7 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
       }
     }
     setTesting(false);
+    refreshAuth();
   };
 
   const saveGateway = () => {
@@ -172,6 +189,7 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
     }));
     setTest(null);
     if (url || BUILD_GATEWAY_URL) window.setTimeout(() => void refreshLabs(), 50);
+    refreshAuth();
   };
 
   const importProblems = async () => {
@@ -256,13 +274,16 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
           <div className="vj-access">
             <AccessBadge access={v.contestAccess} />
             {v.contestAccess === 'restricted' && (
-              <Notice tone="warn">
-                <span>
-                  Este contest é <b>privado</b> e o gateway ainda não tem acesso: o VJudge devolve as questões ocultas e o ranking vazio. O VJudge só
-                  aceita a senha do contest de uma <b>conta logada</b>, por isso o gateway precisa também do segredo <code>VJUDGE_COOKIE</code> (sessão
-                  dessa conta). A senha nunca fica no app. Passo a passo em <code>gateway/README.md</code>; o botão <b>Testar conexão</b> mostra o que falta.
-                </span>
-              </Notice>
+              <EnterContest
+                base={base}
+                contestId={v.contestId}
+                auth={auth}
+                onEntered={(access) => {
+                  commit((s) => ({ ...s, vjudge: { ...s.vjudge, contestAccess: access, warning: null } }));
+                  refreshAuth();
+                  void syncNow();
+                }}
+              />
             )}
           </div>
         )}
@@ -295,6 +316,7 @@ export function VJudgeScreen({ go }: { go: (r: Route) => void }) {
                 ? ''
                 : 'Sem gateway: os laboratórios usam a cópia do build e o ranking precisa ser colado manualmente.'}
           </span>
+          {base && <AuthCard auth={auth} onReconnect={() => refreshAuth(true)} />}
           <div className="row-gap">
             <button className="btn btn--ghost" disabled={!base || testing} onClick={() => void runTest()}>
               <PlugZap size={16} /> {testing ? 'Testando…' : 'Testar conexão'}
