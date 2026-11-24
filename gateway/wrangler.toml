@@ -1,0 +1,13 @@
+# Configuração para publicar via CLI (`npx wrangler deploy`).
+# Quem publicar pelo painel da Cloudflare não precisa deste arquivo.
+name = "wcc-gateway"
+main = "dist/wcc-gateway.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+# Origens que podem usar o gateway. "*" é seguro para dados públicos;
+# para contests privados, liste explicitamente a URL do seu GitHub Pages.
+ALLOWED_ORIGINS = "*"
+
+# Contests privados (opcional) — defina como segredo, nunca aqui:
+#   npx wrangler secret put VJUDGE_COOKIE
