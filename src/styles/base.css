@@ -1,6 +1,10 @@
 /* ==========================================================================
    WCC Control — tokens e primitivas
+   Linguagem visual "console do juiz": papel quadriculado de rascunho de
+   algoritmos + elementos de juiz online (veredictos, teclas, terminal).
    Poppins para interface, Space Mono para dados técnicos (IDs, números, horas).
+   Regra de destaque: o que está selecionado ou é a ação principal ganha a
+   sombra deslocada (--pop); o resto usa contorno fino.
    ========================================================================== */
 
 :root {
@@ -33,6 +37,17 @@
   --r-lg: 18px;
   --shadow: 0 1px 2px rgba(20, 22, 27, 0.05), 0 8px 28px rgba(20, 22, 27, 0.08);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --r-sm: 6px;
+  /* sombra deslocada, sem desfoque: assinatura de "selecionado / ação principal" */
+  --pop: 3px 3px 0 var(--ink);
+  --pop-purple: 4px 4px 0 var(--purple);
+  --pop-green: 5px 5px 0 var(--green);
+  --statusbar-h: 30px;
+  /* veredictos */
+  --ac: #1b9e63;
+  --gold: #e8b931;
+  --silver: #aab2bd;
+  --bronze: #c98a5a;
 
   color-scheme: light;
 }
@@ -88,6 +103,16 @@ button:disabled {
 :focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
+}
+
+::selection {
+  background: var(--purple-soft);
+  color: var(--purple-ink);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
 code {
@@ -172,7 +197,8 @@ code {
   white-space: nowrap;
 }
 .btn:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
+  transform: translate(1px, 1px);
+  box-shadow: none !important;
 }
 .btn:disabled {
   opacity: 0.45;
@@ -182,8 +208,9 @@ code {
   color: var(--white);
 }
 .btn--primary:hover:not(:disabled) {
-  background: var(--blue);
-  box-shadow: 0 6px 18px rgba(30, 136, 253, 0.32);
+  /* tecla pressionável: sobe e projeta a sombra roxa da estrela */
+  transform: translate(-2px, -2px);
+  box-shadow: var(--pop-purple);
 }
 .btn--ghost {
   background: transparent;
@@ -191,8 +218,11 @@ code {
 }
 .btn--ghost:hover:not(:disabled),
 .btn--ghost.is-on {
-  box-shadow: inset 0 0 0 1.5px var(--ink);
+  box-shadow:
+    inset 0 0 0 1.5px var(--ink),
+    2px 2px 0 var(--ink);
   background: var(--white);
+  transform: translate(-1px, -1px);
 }
 .btn--danger {
   background: var(--error);
@@ -203,7 +233,9 @@ code {
   color: var(--white);
 }
 .btn--deliver:hover {
-  background: var(--green-ink);
+  background: var(--ac);
+  box-shadow: 2px 2px 0 var(--ink);
+  transform: translate(-1px, -1px);
 }
 .btn--onDark {
   background: rgba(255, 255, 255, 0.1);
@@ -484,6 +516,9 @@ select {
   align-items: center;
   gap: 6px;
 }
+.chip:hover:not(.is-on) {
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
 .chip.is-on {
   background: var(--ink);
   color: var(--white);
@@ -514,6 +549,82 @@ select {
   margin-top: 10px;
 }
 
+/* ---------- teclas, veredictos e cursor ---------- */
+
+/* tecla: letras de questão, etapas e atalhos */
+.keycap {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.82rem;
+  line-height: 1;
+  border-radius: var(--r-sm);
+  background: var(--white);
+  color: var(--ink);
+  box-shadow:
+    inset 0 0 0 1.5px var(--ink),
+    inset 0 -3px 0 var(--c, var(--ink));
+}
+kbd,
+.kbd {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px currentColor, inset 0 -2px 0 currentColor;
+  opacity: 0.85;
+}
+
+/* veredicto: como no juiz online */
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--white);
+  flex: none;
+}
+.verdict--ac,
+.verdict--ok,
+.verdict--done {
+  background: var(--green);
+  color: var(--ink);
+}
+.verdict--err {
+  background: #ff8d8a;
+  color: #3a1514;
+}
+.verdict--queue {
+  background: var(--purple);
+}
+
+/* cursor de terminal: estados de carregamento */
+.caret::after {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: caret 1s steps(1) infinite;
+}
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
 /* ---------- estrela ---------- */
 
 .wcc-logo {
@@ -535,7 +646,7 @@ select {
 .toasts {
   position: fixed;
   right: 20px;
-  bottom: 20px;
+  bottom: calc(var(--statusbar-h) + 14px);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -586,6 +697,9 @@ select {
   min-width: 0;
 }
 .toast__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-weight: 600;
   font-size: 0.92rem;
   line-height: 1.3;
@@ -657,7 +771,9 @@ select {
   border-radius: var(--r-lg);
   padding: 26px;
   width: min(480px, 100%);
-  box-shadow: var(--shadow);
+  box-shadow:
+    inset 0 0 0 2px var(--ink),
+    6px 6px 0 var(--purple);
   animation: toast-in 0.3s var(--ease);
 }
 .modal__title {
@@ -686,7 +802,9 @@ select {
   top: calc(100% + 8px);
   background: var(--white);
   border-radius: 14px;
-  box-shadow: var(--shadow);
+  box-shadow:
+    inset 0 0 0 1.5px var(--ink),
+    var(--pop);
   padding: 6px;
   min-width: 220px;
   z-index: 50;

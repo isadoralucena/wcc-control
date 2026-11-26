@@ -931,10 +931,14 @@
   opacity: 0.75;
 }
 .pc--free {
+  /* livre: só o contorno, para quem está sentado se destacar */
   background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--line);
+  box-shadow: inset 0 0 0 1px var(--line);
   justify-content: center;
   align-items: center;
+}
+.pc--free .pc__id {
+  opacity: 0.6;
 }
 .pc--free.is-target:hover {
   box-shadow: inset 0 0 0 2px var(--purple);

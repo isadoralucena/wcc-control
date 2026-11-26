@@ -1,5 +1,5 @@
 import { WccLogo } from './WccLogo';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Minus, Plus } from 'lucide-react';
 
 /** Seletor segmentado (opções mutuamente exclusivas). */
@@ -70,7 +70,7 @@ export function Stepper({
 /** Cabeçalho editorial de seção: número em mono + título + descrição. */
 export function SectionHead({ index, title, children }: { index: string; title: string; children?: ReactNode }) {
   return (
-    <header className="section-head">
+    <header className="section-head" id={`sec-${index}`}>
       <span className="section-head__index">{index}</span>
       <div>
         <h2 className="section-head__title">{title}</h2>
@@ -116,4 +116,14 @@ export function contestClock(ts: number, begin: number | null, length?: number |
   const m = Math.floor(elapsed / 60000);
   if (m < 0) return null;
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/** Relógio da interface: atualiza a cada `ms`. */
+export function useNow(ms = 1000): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), ms);
+    return () => window.clearInterval(t);
+  }, [ms]);
+  return now;
 }

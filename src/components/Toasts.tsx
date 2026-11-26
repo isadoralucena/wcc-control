@@ -73,6 +73,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Veredicto exibido antes do título, como no log de um juiz online. */
+const VERDICT: Record<ToastKind, { code: string; cls: string }> = {
+  ac: { code: 'AC', cls: 'ac' },
+  success: { code: 'OK', cls: 'ok' },
+  error: { code: 'ERR', cls: 'err' },
+  info: { code: 'INFO', cls: 'info' },
+  'column-done': { code: 'DONE', cls: 'done' },
+  pending: { code: 'FILA', cls: 'queue' },
+};
+
 function ToastView({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   const [paused, setPaused] = useState(false);
   const remaining = useRef(toast.ttl);
@@ -103,7 +113,10 @@ function ToastView({ toast, onClose }: { toast: Toast; onClose: () => void }) {
     <div className={`toast toast--${toast.kind}`} onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
       <div className="toast__icon">{icon}</div>
       <div className="toast__body">
-        <div className="toast__title">{toast.title}</div>
+        <div className="toast__title">
+          <span className={`verdict verdict--${VERDICT[toast.kind].cls}`}>{VERDICT[toast.kind].code}</span>
+          <span>{toast.title}</span>
+        </div>
         {toast.detail && <div className="toast__detail">{toast.detail}</div>}
       </div>
       {toast.action && (

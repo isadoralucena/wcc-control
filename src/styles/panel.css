@@ -13,10 +13,16 @@
 .band {
   position: relative;
   overflow: hidden;
-  background: var(--ink);
+  background-color: var(--ink);
+  /* quadriculado bem sutil: o mesmo papel de rascunho, agora no "telão" */
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 22px 22px;
   color: var(--white);
   border-radius: 22px;
   padding: 22px 26px 18px;
+  box-shadow: var(--pop-purple);
 }
 .band__bgstar {
   /* estrela gigante recortada no canto: assinatura visual do WCC */
@@ -63,6 +69,43 @@
   font-size: 2rem;
   font-weight: 700;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.tick {
+  animation: caret 1s steps(1) infinite;
+}
+/* progresso das entregas: balões entregues / Accepted */
+.deliverybar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  position: relative;
+  z-index: 1;
+  font-size: 0.72rem;
+}
+.deliverybar__l {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  opacity: 0.6;
+}
+.deliverybar__track {
+  flex: 1;
+  max-width: 520px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.deliverybar__track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: repeating-linear-gradient(90deg, var(--green) 0 10px, #4fc283 10px 12px);
+  transition: width 0.6s var(--ease);
+}
+.deliverybar__v {
+  color: var(--green);
 }
 .band__sync {
   display: flex;
@@ -297,9 +340,14 @@
   color: var(--white);
 }
 .sheet__letter {
-  font-weight: 700;
-  font-size: 1rem;
-  line-height: 1;
+  margin: 2px 0;
+}
+.sheet__ph.is-focus .keycap {
+  background: var(--ink);
+  color: var(--white);
+  box-shadow:
+    inset 0 0 0 1.5px var(--white),
+    inset 0 -3px 0 var(--c);
 }
 .sheet__pcount {
   font-size: 0.64rem;
@@ -393,12 +441,17 @@
 .cell:hover {
   transform: scale(1.08);
 }
+/* não resolvida: o mais discreto possível, para os Accepted saltarem aos olhos */
 .cell--idle {
-  background: #efede6;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.cell--idle:hover {
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
 }
 .cell__dot {
-  width: 7px;
-  height: 7px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: #c9c6bc;
 }
@@ -411,7 +464,8 @@
   color: var(--ink);
 }
 .cell--solved:hover {
-  box-shadow: 0 0 0 3px var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  transform: translate(-2px, -2px);
 }
 .cell--solved .cell__balloon path:first-child {
   stroke: var(--ink);
