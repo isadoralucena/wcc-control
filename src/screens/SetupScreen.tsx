@@ -4,6 +4,9 @@ import { useStore } from '../state/store';
 import { allocate } from '../state/actions';
 import { Notice, Segmented, SectionHead } from '../components/ui';
 import { WccLogo } from '../components/WccLogo';
+import { roomsOf } from '../state/selectors';
+import { availableMachines } from '../domain/allocation';
+import { allProblems } from '../domain/contests';
 import { LabsSection } from './setup/LabsSection';
 import { ParticipantsSection } from './setup/ParticipantsSection';
 import { ModeSection } from './setup/ModeSection';
@@ -34,14 +37,11 @@ export function SetupScreen({ go }: { go: (r: Route) => void }) {
             </span>
           </h1>
           <p className="hero__lead">
-            Os laboratórios vêm direto do site do LCC. Cadastre participantes, escolha as salas e deixe o WCC Control
+            Use os laboratórios do LCC/UFCG ou cadastre os seus. Cadastre participantes, escolha as salas e deixe o WCC Control
             distribuir computadores e cadeiras. Tudo é salvo automaticamente neste navegador.
           </p>
         </div>
-        <div className="hero__art" aria-hidden>
-          <WccLogo size={220} className="hero__star" />
-          <span className="hero__orbit" />
-        </div>
+        <Preflight go={go} />
       </div>
 
       <section className="section">
@@ -135,4 +135,83 @@ function GapDiagram({ gap, width }: { gap: number; width: number }) {
       ))}
     </div>
   );
+}
+
+/**
+ * Checklist de prontidão no lugar de uma arte decorativa: mostra, como um
+ * "boot log", o que já está pronto e leva direto ao que falta.
+ */
+function Preflight({ go }: { go: (r: Route) => void }) {
+  const { state, units } = useStore();
+  const rooms = roomsOf(state).filter((r) => r.selected);
+  const pcs = rooms.reduce((a, r) => a + availableMachines(r), 0);
+  const linked = state.contests.filter((c) => c.contestId);
+  const problems = allProblems(state).length;
+  const team = state.mode === 'team';
+  const items: { ok: boolean; label: string; detail: string; to: () => void }[] = [
+    { ok: !!state.competitionName.trim(), label: 'competição', detail: state.competitionName.trim() || 'sem nome', to: () => scrollTo('sec-01') },
+    {
+      ok: rooms.length > 0,
+      label: 'laboratórios',
+      detail: rooms.length ? `${rooms.map((r) => r.id).join(' + ')} · ${pcs} PCs` : 'nenhum selecionado',
+      to: () => scrollTo('sec-02'),
+    },
+    { ok: state.participants.length > 0, label: 'participantes', detail: `${state.participants.length} cadastradas`, to: () => scrollTo('sec-03') },
+    {
+      ok: !team || units.length > 0,
+      label: 'modalidade',
+      detail: team ? `${units.length} equipes` : 'individual',
+      to: () => scrollTo('sec-04'),
+    },
+    {
+      ok: !!state.allocation?.report.ok,
+      label: 'mapa de sala',
+      detail: state.allocation?.report.ok ? `${Object.keys(state.allocation.placements).length} lugares` : 'não gerado',
+      to: () => go('mapa'),
+    },
+    {
+      ok: linked.length > 0 && problems > 0,
+      label: 'vjudge',
+      detail: linked.length ? `${linked.length} contest${linked.length > 1 ? 's' : ''} · ${problems} questões` : 'nenhum contest',
+      to: () => go('vjudge'),
+    },
+  ];
+  const done = items.filter((i) => i.ok).length;
+  return (
+    <aside className="preflight" aria-label="Prontidão da competição">
+      <div className="preflight__head">
+        <WccLogo size={18} />
+        <span>
+          wcc <b>check</b>
+        </span>
+      </div>
+      <ol className="preflight__list">
+        {items.map((it, i) => (
+          <li key={it.label}>
+            <button className={`preflight__item ${it.ok ? 'is-ok' : 'is-todo'}`} style={{ animationDelay: `${i * 60}ms` }} onClick={it.to}>
+              <span className="preflight__st">{it.ok ? '[ok]' : '[..]'}</span>
+              <span className="preflight__label">
+                {it.label}
+                <span>{it.detail}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="preflight__foot">
+        <span>
+          {done}/{items.length}
+        </span>
+        <span className="preflight__bar">
+          <span style={{ width: `${(done / items.length) * 100}%` }} />
+        </span>
+        <span>{done === items.length ? 'pronto' : 'em preparo'}</span>
+      </div>
+      <WccLogo size={120} className="preflight__mark" />
+    </aside>
+  );
+}
+
+function scrollTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

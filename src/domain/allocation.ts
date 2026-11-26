@@ -55,6 +55,7 @@ function runs(lab: Room, dir: 'h' | 'v'): string[][] {
 
 /** Direção das bancadas: a que gera sequências contínuas mais longas. */
 export function orientationOf(lab: Room): 'h' | 'v' {
+  if (lab.benchAxis) return lab.benchAxis;
   const avg = (rs: string[][]) => (rs.length ? rs.reduce((a, r) => a + r.length, 0) / rs.length : 0);
   return avg(runs(lab, 'v')) > avg(runs(lab, 'h')) ? 'v' : 'h';
 }

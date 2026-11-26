@@ -6,7 +6,9 @@ import { allocate } from '../state/actions';
 import { roomsOf } from '../state/selectors';
 import { useConfirm } from '../components/Confirm';
 import { useToasts } from '../components/Toasts';
-import { EmptyState, Notice } from '../components/ui';
+import { EmptyState, Notice, Segmented } from '../components/ui';
+import { BalloonMap } from './arena/BalloonMap';
+import { allProblems } from '../domain/contests';
 import { availableMachines, checkAllocation, moveUnit } from '../domain/allocation';
 import { normalizeName } from '../domain/participants';
 import { pad } from '../domain/ids';
@@ -21,8 +23,10 @@ export function MapScreen({ go }: { go: (r: Route) => void }) {
   const { notify } = useToasts();
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<'edit' | 'balloons'>('edit');
+  const [focusProblem, setFocusProblem] = useState<string | null>(null);
   const alloc = state.allocation;
-  const rooms = useMemo(() => roomsOf(state), [state.labCatalog, state.labSelection]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rooms = useMemo(() => roomsOf(state), [state.labCatalog, state.labSelection, state.customLabs]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedRooms = rooms.filter((r) => r.selected);
   const placements = alloc?.placements ?? {};
   const health = useMemo(() => checkAllocation(rooms, units, placements), [rooms, units, placements]);
@@ -116,6 +120,18 @@ export function MapScreen({ go }: { go: (r: Route) => void }) {
     <div className="screen map">
       <ScreenTitle>
         <div className="row-gap noprint">
+          <Segmented<'edit' | 'balloons'>
+            label="Modo do mapa"
+            value={mode}
+            onChange={(m) => {
+              setMode(m);
+              setSelected(null);
+            }}
+            options={[
+              { value: 'edit', label: 'Alocação', hint: 'Quem senta onde; clique para mover ou trocar' },
+              { value: 'balloons', label: 'Balões', hint: 'Balões pendentes e entregues em cada computador' },
+            ]}
+          />
           <label className="search">
             <Search size={14} />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Localizar ${word[0]}`} />
@@ -128,11 +144,24 @@ export function MapScreen({ go }: { go: (r: Route) => void }) {
           <button className="btn btn--ghost" onClick={() => window.print()}>
             <Printer size={16} /> Imprimir
           </button>
-          <button className="btn btn--ghost" onClick={() => void recompute()}>
-            <RefreshCw size={16} /> {state.allocationSettings.order === 'random' ? 'Novo sorteio' : 'Recalcular'}
-          </button>
+          {mode === 'edit' && (
+            <button className="btn btn--ghost" onClick={() => void recompute()}>
+              <RefreshCw size={16} /> {state.allocationSettings.order === 'random' ? 'Novo sorteio' : 'Recalcular'}
+            </button>
+          )}
         </div>
       </ScreenTitle>
+
+      {mode === 'balloons' ? (
+        allProblems(state).length ? (
+          <BalloonMap rooms={selectedRooms} units={units} problems={allProblems(state)} focusProblem={focusProblem} onFocusProblem={setFocusProblem} query={query} />
+        ) : (
+          <EmptyState title="Nenhuma questão definida" action={<button className="btn btn--primary" onClick={() => go('vjudge')}>Configurar VJudge</button>}>
+            Os balões aparecem no mapa depois que as questões do contest forem definidas.
+          </EmptyState>
+        )
+      ) : (
+        <>
 
       {rep.error ? (
         <Notice tone="error">{rep.error}</Notice>
@@ -148,7 +177,7 @@ export function MapScreen({ go }: { go: (r: Route) => void }) {
           <div className="report__text">
             <p>
               <b>Como foi calculado:</b> {live.placed} {word[1]} distribuídas proporcionalmente à capacidade de cada laboratório, seguindo as
-              bancadas da planta do LCC.{' '}
+              bancadas da planta de cada sala.{' '}
               {team &&
                 `Cada equipe ocupa uma cadeira por integrante, vizinhas na mesma bancada, e usa só o computador do meio — por isso ${live.seats} cadeiras ocupadas e ${live.computers} computadores em uso. `}
               Tentou-se primeiro {rep.maxGap} cadeira(s) vazia(s) entre {word[1]}; foi adotado <b>{rep.gap}</b>.
@@ -240,6 +269,9 @@ export function MapScreen({ go }: { go: (r: Route) => void }) {
           />
         ))}
       </div>
+
+        </>
+      )}
 
       <div className="cta noprint">
         <span className="mono muted">Próximo passo: conectar o contest do VJudge.</span>
