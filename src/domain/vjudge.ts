@@ -16,9 +16,10 @@
  * Nenhum dos dois envia cabeçalhos CORS, então o navegador não consegue lê-los
  * diretamente a partir do GitHub Pages. Veja `services/vjudgeClient.ts`.
  */
-import type { AppEvent, AppState, Cell, LogEntry, Problem } from './types';
+import type { AppEvent, AppState, Cell, Contest, LogEntry, Problem } from './types';
 import { buildUnits } from './teams';
 import { problemLetter, uid } from './ids';
+import { findContest, problemKey, problemLabel, updateContest } from './contests';
 
 export const BALLOON_PALETTE = [
   '#61D295', '#1E88FD', '#7B68E5', '#F5C542', '#F2545B', '#FF8A3D',
@@ -135,15 +136,20 @@ export function problemCountHint(rank: RankData): number {
   return rank.submissions.reduce((m, s) => Math.max(m, s.problem + 1), 0);
 }
 
-/** Gera/atualiza a lista de questões preservando as cores já escolhidas. */
-export function buildProblems(previous: Problem[], items: { num?: string; title?: string }[]): Problem[] {
+/**
+ * Gera/atualiza a lista de questões de um contest preservando as cores já escolhidas.
+ * `colorOffset` desloca a paleta padrão para que contests diferentes comecem com cores diferentes.
+ */
+export function buildProblems(contest: string, previous: Problem[], items: { num?: string; title?: string }[], colorOffset = 0): Problem[] {
   return items.map((it, i) => {
     const prev = previous.find((p) => p.index === i);
     return {
+      key: problemKey(contest, i),
+      contest,
       index: i,
       letter: it.num || prev?.letter || problemLetter(i),
       title: it.title ?? prev?.title ?? '',
-      color: prev?.color ?? defaultColor(i),
+      color: prev?.color ?? defaultColor(i + colorOffset),
     };
   });
 }
@@ -180,14 +186,16 @@ export interface ApplyResult {
  * - Notifica cada (unidade, questão) uma única vez, usando `state.notified`.
  * - Na primeira leitura de um contest já em andamento, agrupa as notificações.
  */
-export function applyRank(state: AppState, rank: RankData, now: number): ApplyResult {
+export function applyRank(state: AppState, contestKey: string, rank: RankData, now: number): ApplyResult {
+  const contest = findContest(state, contestKey);
+  if (!contest) throw new Error('Contest não encontrado.');
   const units = buildUnits(state);
   const acByAccount = firstAccepted(rank);
   const notified = new Set(state.notified);
   const results = { ...state.results };
   const fresh: { unitName: string; problem: number; account: string; at: number; key: string }[] = [];
-  const firstSync = state.vjudge.lastSyncAt === null;
-  const problemCount = state.problems.length;
+  const firstSync = contest.lastSyncAt === null;
+  const problemCount = contest.problems.length;
 
   for (const unit of units) {
     // Melhor (mais cedo) Accepted entre as contas da unidade.
@@ -204,17 +212,18 @@ export function applyRank(state: AppState, rank: RankData, now: number): ApplyRe
     const row = { ...(results[unit.id] ?? {}) };
     best.forEach(({ seconds, account }, prob) => {
       if (problemCount > 0 && prob >= problemCount) return; // questão fora da grade configurada
-      const prev: Cell = row[prob] ?? {};
+      const pk = problemKey(contestKey, prob);
+      const prev: Cell = row[pk] ?? {};
       const solvedAt = rank.begin + seconds * 1000;
       if (prev.solvedAt !== undefined && prev.solvedSource === 'vjudge') return;
-      row[prob] = {
+      row[pk] = {
         ...prev,
         solvedAt,
         solvedSource: 'vjudge',
         account,
         detectedAt: prev.detectedAt ?? now,
       };
-      const key = `${unit.id}:${prob}`;
+      const key = `${unit.id}:${pk}`;
       if (!notified.has(key)) {
         notified.add(key);
         if (prev.solvedAt === undefined) fresh.push({ unitName: unit.name, problem: prob, account, at: solvedAt, key });
@@ -223,8 +232,11 @@ export function applyRank(state: AppState, rank: RankData, now: number): ApplyRe
     results[unit.id] = row;
   }
 
-  const letter = (i: number) => state.problems.find((p) => p.index === i)?.letter ?? problemLetter(i);
-  const color = (i: number) => state.problems.find((p) => p.index === i)?.color;
+  const letter = (i: number) => {
+    const p = contest.problems.find((x) => x.index === i);
+    return problemLabel(state, p ?? { contest: contestKey, letter: problemLetter(i) });
+  };
+  const color = (i: number) => contest.problems.find((p) => p.index === i)?.color;
   const events: AppEvent[] = [];
   const log: LogEntry[] = [];
   fresh.sort((a, b) => a.at - b.at);
@@ -248,20 +260,19 @@ export function applyRank(state: AppState, rank: RankData, now: number): ApplyRe
   for (const f of fresh)
     log.push({ id: uid('log'), at: now, kind: 'ac', text: `${f.unitName} resolveu ${letter(f.problem)} (${f.account})` });
 
+  const next = updateContest(
+    { ...state, results, notified: [...notified], log: [...log.reverse(), ...state.log].slice(0, 300) },
+    contestKey,
+    (c) => ({
+      ...c,
+      contestTitle: rank.title || c.contestTitle,
+      begin: rank.begin || c.begin,
+      length: rank.length || c.length,
+      seenAccounts: [...rank.accounts.values()].map((n) => n.toLowerCase()),
+    }),
+  );
   return {
-    state: {
-      ...state,
-      results,
-      notified: [...notified],
-      log: [...log.reverse(), ...state.log].slice(0, 300),
-      vjudge: {
-        ...state.vjudge,
-        contestTitle: rank.title || state.vjudge.contestTitle,
-        begin: rank.begin || state.vjudge.begin,
-        length: rank.length || state.vjudge.length,
-        seenAccounts: [...rank.accounts.values()].map((n) => n.toLowerCase()),
-      },
-    },
+    state: next,
     events,
     newAccepted: fresh.length,
   };
@@ -271,9 +282,9 @@ export function applyRank(state: AppState, rank: RankData, now: number): ApplyRe
  * Aviso não fatal sobre o conteúdo do ranking. Diferencia "contest sem acesso"
  * de "contest ainda sem submissões" e de "contas cadastradas não aparecem".
  */
-export function rankWarning(state: AppState, rank: RankData): string | null {
+export function rankWarning(state: AppState, contest: Contest, rank: RankData): string | null {
   if (rank.accounts.size === 0) {
-    if (state.vjudge.contestAccess === 'restricted')
+    if (contest.contestAccess === 'restricted')
       return 'Contest privado e o gateway não tem acesso autorizado: o VJudge devolve o ranking vazio. Use "Testar conexão" para ver o diagnóstico.';
     return null; // acessível e ainda sem submissões
   }

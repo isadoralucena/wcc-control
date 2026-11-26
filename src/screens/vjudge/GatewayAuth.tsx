@@ -74,7 +74,7 @@ export function AuthCard({ auth, onReconnect }: { auth: AuthView; onReconnect: (
       ? 'O gateway publicado é anterior à versão 2.2 e não faz login sozinho. Publique gateway/dist/wcc-gateway.js.'
       : auth.error;
   } else if (!d) {
-    text = auth.loading ? 'consultando…' : '';
+    text = auth.loading ? 'consultando' : '';
   } else if (d.status === 'origin_not_allowed') {
     tone = 'warn';
     text = 'Este endereço do app não está em ALLOWED_ORIGINS do gateway; contests privados não ficam acessíveis daqui.';
@@ -103,7 +103,7 @@ export function AuthCard({ auth, onReconnect }: { auth: AuthView; onReconnect: (
       <span className="authcard__icon">{tone === 'ok' ? <CheckCircle2 size={18} /> : tone === 'warn' ? <AlertTriangle size={18} /> : <UserRound size={18} />}</span>
       <div className="authcard__body">
         <b>{title}</b>
-        {text && <span>{text}</span>}
+        {text && <span className={auth.loading && !d ? 'caret' : ''}>{text}</span>}
       </div>
       {d && d.mode === 'account' && (
         <button className="btn btn--ghost btn--sm" onClick={onReconnect} disabled={auth.loading}>

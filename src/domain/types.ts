@@ -24,6 +24,10 @@ export type LccCell = { id: string; status: MachineStatus } | 'door' | null;
 export interface LccLab {
   id: string;
   name: string;
+  /** 'lcc' = planta do site do LCC/UFCG; 'custom' = laboratório cadastrado pelo organizador. */
+  origin?: 'lcc' | 'custom';
+  /** Direção das bancadas, quando conhecida (laboratórios personalizados). Sem ela, é detectada pela planta. */
+  benchAxis?: 'h' | 'v';
   rows: number;
   cols: number;
   machines: number;
@@ -45,6 +49,29 @@ export interface LabSelection {
   selected: boolean;
   /** Computadores indisponíveis nesta competição (ex.: com defeito). */
   excluded: string[];
+}
+
+/** Posição da porta em um laboratório personalizado ("frente" = topo da planta). */
+export type DoorPosition = 'front-left' | 'front-right' | 'back-left' | 'back-right' | 'none';
+
+/**
+ * Laboratório de outra instituição/local, descrito por parâmetros. A planta
+ * (grade de computadores) é gerada a partir deles em `domain/customLabs.ts`,
+ * no mesmo formato da planta do LCC — por isso a alocação funciona igual.
+ */
+export interface CustomLabSpec {
+  /** Sigla única; também é o prefixo das máquinas (SALA1 → SALA1-01). */
+  id: string;
+  name: string;
+  /** Computadores (= cadeiras). */
+  machines: number;
+  /** Quantidade de bancadas (fileiras ou colunas de computadores). */
+  benches: number;
+  /** 'h' = corredores horizontais (bancadas em fileiras); 'v' = corredores verticais (bancadas em colunas). */
+  orientation: 'h' | 'v';
+  /** Bancadas em pares, costas com costas (um corredor a cada duas bancadas). */
+  paired: boolean;
+  door: DoorPosition;
 }
 
 /** Laboratório pronto para uso: dados do site + escolhas do organizador. */
@@ -151,6 +178,10 @@ export interface Allocation {
 /* ------------------------------------------------------------------ */
 
 export interface Problem {
+  /** Identificador global da questão: "<contest>:<índice>". Chave de `results`. */
+  key: string;
+  /** Contest ao qual a questão pertence (`Contest.key`). */
+  contest: Id;
   /** Índice 0-based, o mesmo usado pelo VJudge no ranking. */
   index: number;
   letter: string;
@@ -160,7 +191,19 @@ export interface Problem {
 
 export type DataSource = 'gateway' | 'paste';
 
+/** Configuração do acompanhamento, comum a todos os contests. */
 export interface VJudgeSettings {
+  source: DataSource;
+  autoPoll: boolean;
+  pollSeconds: number;
+}
+
+/** Um contest do VJudge acompanhado (pode haver vários ao mesmo tempo). */
+export interface Contest {
+  /** Identificador local (não é o ID do VJudge). */
+  key: Id;
+  /** Sigla curta que distingue as questões quando há mais de um contest (ex.: "INI", "AVA"). */
+  tag: string;
   contestInput: string;
   contestId: string;
   /**
@@ -170,9 +213,6 @@ export interface VJudgeSettings {
   contestAccess: 'public' | 'authorized' | 'restricted' | null;
   /** Aviso não fatal da última leitura (ex.: ranking vazio por falta de acesso). */
   warning: string | null;
-  source: DataSource;
-  autoPoll: boolean;
-  pollSeconds: number;
   contestTitle: string;
   begin: number | null;
   length: number | null;
@@ -183,6 +223,7 @@ export interface VJudgeSettings {
   failures: number;
   /** Usernames (minúsculos) que apareceram no ranking na última leitura. */
   seenAccounts: string[];
+  problems: Problem[];
 }
 
 /**
@@ -200,8 +241,8 @@ export interface Cell {
   deliveredAt?: number;
 }
 
-/** results[unitId][problemIndex] */
-export type Results = Record<Id, Record<number, Cell>>;
+/** results[unitId][problemKey] — problemKey = Problem.key ("<contest>:<índice>"). */
+export type Results = Record<Id, Record<string, Cell>>;
 
 export type LogKind = 'ac' | 'delivered' | 'undo' | 'manual' | 'sync' | 'info';
 
@@ -226,13 +267,15 @@ export interface AppEvent {
 /* ------------------------------------------------------------------ */
 
 export interface AppState {
-  version: 2;
+  version: 3;
   competitionName: string;
   /** URL do WCC Gateway (vazio = usa o padrão definido no build, se houver). */
   gatewayUrl: string;
   labCatalog: LabCatalog;
   /** Escolhas por laboratório, indexadas pela sigla (LCC1, LCC2...). */
   labSelection: Record<Id, LabSelection>;
+  /** Laboratórios cadastrados manualmente (outras instituições/locais). */
+  customLabs: CustomLabSpec[];
   participants: Participant[];
   mode: Mode;
   teamSettings: TeamSettings;
@@ -240,9 +283,10 @@ export interface AppState {
   allocationSettings: AllocationSettings;
   allocation: Allocation | null;
   vjudge: VJudgeSettings;
-  problems: Problem[];
+  /** Contests acompanhados, na ordem de exibição. */
+  contests: Contest[];
   results: Results;
-  /** Chaves "unidade:questão" já notificadas, para nunca repetir notificação. */
+  /** Chaves "unidade:questão" (questão = Problem.key) já notificadas, para nunca repetir notificação. */
   notified: string[];
   log: LogEntry[];
   updatedAt: number;

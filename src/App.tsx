@@ -7,11 +7,12 @@ import { useToasts } from './components/Toasts';
 import { downloadText, exportState, importState, localStorageAdapter, slugify } from './state/persistence';
 import { defaultState } from './state/defaults';
 import { overview } from './domain/balloons';
-import { formatTime } from './components/ui';
+import { allProblems } from './domain/contests';
 import { SetupScreen } from './screens/SetupScreen';
 import { MapScreen } from './screens/MapScreen';
 import { VJudgeScreen } from './screens/VJudgeScreen';
 import { PanelScreen } from './screens/PanelScreen';
+import { StatusBar } from './components/StatusBar';
 
 export type Route = 'setup' | 'mapa' | 'vjudge' | 'painel';
 
@@ -52,10 +53,27 @@ export default function App() {
     document.title = pending > 0 ? `(${pending}) ${name}` : name;
   }, [pending, state.competitionName]);
 
+  // Atalhos 1–4 para as etapas (ignorados enquanto se digita ou com um diálogo aberto).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector('.modal-backdrop')) return;
+      const step = STEPS[Number(e.key) - 1];
+      if (step) go(step.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+
   const stepStatus = (id: Route): string | null => {
     if (id === 'setup') return state.participants.length ? `${state.participants.length}` : null;
     if (id === 'mapa') return state.allocation?.report.ok ? `${Object.keys(state.allocation.placements).length}` : null;
-    if (id === 'vjudge') return state.problems.length ? `${state.problems.length}q` : null;
+    if (id === 'vjudge') {
+      const n = allProblems(state).length;
+      return n ? `${n}q` : null;
+    }
     if (id === 'painel') return pending ? `${pending}` : null;
     return null;
   };
@@ -82,6 +100,7 @@ export default function App() {
                 className={`step ${route === s.id ? 'is-active' : ''} ${badge ? 'has-data' : ''} ${s.id === 'painel' && pending ? 'has-alert' : ''}`}
                 onClick={() => go(s.id)}
                 aria-current={route === s.id ? 'page' : undefined}
+                title={`${s.label} — atalho ${Number(s.n)}`}
               >
                 <span className="step__n">{s.n}</span>
                 <span className="step__label">{s.label}</span>
@@ -99,12 +118,13 @@ export default function App() {
         {route === 'vjudge' && <VJudgeScreen go={go} />}
         {route === 'painel' && <PanelScreen go={go} />}
       </main>
+      <StatusBar go={go} />
     </div>
   );
 }
 
 function DataMenu() {
-  const { state, replace, saveStatus } = useStore();
+  const { state, replace } = useStore();
   const confirm = useConfirm();
   const { notify } = useToasts();
   const [open, setOpen] = useState(false);
@@ -157,10 +177,6 @@ function DataMenu() {
 
   return (
     <div className="datamenu" ref={box}>
-      <span className={`savechip ${saveStatus.error ? 'is-error' : ''}`} title={saveStatus.error ?? 'Salvo automaticamente neste navegador'}>
-        <span className="savechip__dot" />
-        {saveStatus.error ? 'erro ao salvar' : saveStatus.at ? `salvo ${formatTime(saveStatus.at)}` : 'local'}
-      </span>
       <button className="iconbtn" onClick={() => setOpen((o) => !o)} aria-label="Dados da competição" aria-expanded={open}>
         <MoreHorizontal size={18} />
       </button>

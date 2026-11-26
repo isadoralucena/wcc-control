@@ -73,23 +73,27 @@ describe('sincronização', () => {
 
   it('avisa quando o ranking vem vazio por falta de acesso, mas não quando o contest só não tem submissões', () => {
     const empty = parseRank({ id: 1, participants: {}, submissions: [] });
-    expect(rankWarning({ ...state(), vjudge: { ...state().vjudge, contestAccess: 'restricted' } }, empty)).toMatch(/privado/);
-    expect(rankWarning({ ...state(), vjudge: { ...state().vjudge, contestAccess: 'public' } }, empty)).toBeNull();
+    const c = state().contests[0];
+    expect(rankWarning(state(), { ...c, contestAccess: 'restricted' }, empty)).toMatch(/privado/);
+    expect(rankWarning(state(), { ...c, contestAccess: 'public' }, empty)).toBeNull();
   });
   it('avisa quando nenhuma conta cadastrada aparece no ranking', () => {
     const rank = parseRank({ id: 1, participants: { 1: { name: 'outra' } }, submissions: [] });
-    expect(rankWarning(state(), rank)).toMatch(/Nenhuma das 1 contas/);
-    expect(rankWarning(state(), parseRank({ id: 1, participants: { 1: { name: 'ANA123' } }, submissions: [] }))).toBeNull();
+    const c = state().contests[0];
+    expect(rankWarning(state(), c, rank)).toMatch(/Nenhuma das 1 contas/);
+    expect(rankWarning(state(), c, parseRank({ id: 1, participants: { 1: { name: 'ANA123' } }, submissions: [] }))).toBeNull();
   });
   it('migração: estado da v1 com proxy configurado passa a usar o gateway automaticamente', () => {
     const v1 = { version: 1, participants: [], labs: [], vjudge: { source: 'paste', proxyUrl: 'https://gw.example', autoPoll: false } };
     const s = hydrate(v1);
     expect(s.gatewayUrl).toBe('https://gw.example');
     expect(s.vjudge.source).toBe('gateway');
-    expect(s.vjudge.contestAccess).toBeNull();
+    expect(s.contests[0].contestAccess).toBeNull();
   });
   it('exportar e importar preserva entregas de balão', () => {
-    const s = { ...state(), results: { x: { 0: { solvedAt: 1, solvedSource: 'vjudge' as const, deliveredAt: 2 } } } };
-    expect(hydrate(JSON.parse(JSON.stringify(s))).results.x[0].deliveredAt).toBe(2);
+    const st = state();
+    const k = `${st.contests[0].key}:0`;
+    const s = { ...st, results: { x: { [k]: { solvedAt: 1, solvedSource: 'vjudge' as const, deliveredAt: 2 } } } };
+    expect(hydrate(JSON.parse(JSON.stringify(s))).results.x[k].deliveredAt).toBe(2);
   });
 });

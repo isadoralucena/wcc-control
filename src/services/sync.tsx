@@ -1,7 +1,8 @@
 /**
  * Integrações automáticas via WCC Gateway.
  *
- * VJudge
+ * VJudge (um ou mais contests)
+ * - Cada contest é lido em sequência, com estado de sincronização próprio.
  * - Atualização periódica (padrão 15 s, mínimo 10 s) enquanto a opção estiver ligada.
  * - Atualiza imediatamente ao voltar para a aba e ao reconectar à internet.
  * - Em falhas, continua tentando com espera progressiva (até 60 s) e mostra o erro;
@@ -17,10 +18,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from '../state/store';
 import { useToasts } from '../components/Toasts';
-import { applyRank, buildProblems, parseContestInfo, parseRank, rankWarning } from '../domain/vjudge';
+import { applyRank, buildProblems, parseContestInfo, parseRank, rankWarning, type RankData } from '../domain/vjudge';
+import { findContest, updateContest } from '../domain/contests';
 import { overview } from '../domain/balloons';
 import { buildUnits } from '../domain/teams';
-import type { AppEvent, AppState, LccLab } from '../domain/types';
+import type { AppEvent, AppState, Contest, LccLab } from '../domain/types';
 import { gateway, gatewayUrl } from './gateway';
 import { uid } from '../domain/ids';
 
@@ -30,21 +32,26 @@ const CONTEST_REFRESH_MS = 5 * 60 * 1000;
 interface SyncApi {
   busy: boolean;
   labsBusy: boolean;
-  syncNow: (opts?: { auto?: boolean }) => Promise<boolean>;
-  applyPasted: (text: string) => number;
+  /** Atualiza todos os contests (ou só `contestKey`). */
+  syncNow: (opts?: { auto?: boolean; contestKey?: string }) => Promise<boolean>;
+  /** Processa um ranking colado; o contest é identificado pelo ID do JSON. Devolve os Accepted novos. */
+  applyPasted: (text: string, contestKey?: string) => number;
   refreshLabs: (opts?: { auto?: boolean }) => Promise<boolean>;
 }
 
 const SyncContext = createContext<SyncApi | null>(null);
 
-function withRank(state: AppState, raw: unknown) {
-  const rank = parseRank(raw);
+function withRank(state: AppState, contestKey: string, rank: RankData) {
   const now = Date.now();
-  const r = applyRank(state, rank, now);
-  const next: AppState = {
-    ...r.state,
-    vjudge: { ...r.state.vjudge, lastSyncAt: now, lastSyncOk: true, lastError: null, failures: 0, warning: null },
-  };
+  const r = applyRank(state, contestKey, rank, now);
+  const next = updateContest(r.state, contestKey, (c) => ({
+    ...c,
+    lastSyncAt: now,
+    lastSyncOk: true,
+    lastError: null,
+    failures: 0,
+    warning: rankWarning(r.state, c, rank),
+  }));
   const events: AppEvent[] = [...r.events];
   if (r.newAccepted > 0) {
     const o = overview(next, buildUnits(next));
@@ -55,7 +62,21 @@ function withRank(state: AppState, raw: unknown) {
         title: `Existem ${o.waitingUnits} ${next.mode === 'team' ? 'equipes' : 'participantes'} aguardando ${o.pending} balões`,
       });
   }
-  return { state: next, events, newAccepted: r.newAccepted, rankId: rank.id };
+  return { state: next, events, newAccepted: r.newAccepted };
+}
+
+/** Contest que corresponde a um ranking colado (pelo ID do JSON). */
+export function contestForRank(state: AppState, rank: RankData, preferred?: string): Contest {
+  const byId = rank.id ? state.contests.find((c) => c.contestId === String(rank.id)) : undefined;
+  if (byId) return byId;
+  const pref = preferred ? findContest(state, preferred) : undefined;
+  if (pref && (!pref.contestId || !rank.id)) return pref;
+  if (state.contests.length === 1 && (!state.contests[0].contestId || !rank.id)) return state.contests[0];
+  throw new Error(
+    rank.id
+      ? `Esse ranking é do contest ${rank.id}, que não está entre os contests acompanhados. Adicione-o na tela VJudge.`
+      : 'Não foi possível identificar o contest desse ranking.',
+  );
 }
 
 /** Descreve mudanças de computadores entre duas leituras do LCC. */
@@ -85,84 +106,107 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [labsBusy, setLabsBusy] = useState(false);
   const busyRef = useRef(false);
   const labsRef = useRef(false);
-  const lastContestCheck = useRef(0);
+  const lastContestCheck = useRef(new Map<string, number>());
 
   /* ---------------- VJudge ---------------- */
 
+  /** Lê metadados (quando preciso) e o ranking de um contest. Lança erro em falha. */
+  const syncContest = useCallback(
+    async (base: string, key: string) => {
+      const c = findContest(getState(), key);
+      if (!c?.contestId) return;
+      const id = c.contestId;
+      const last = lastContestCheck.current.get(key) ?? 0;
+      // Metadados do contest (acesso, título, horários, questões): no início e a cada 5 min.
+      if (c.contestAccess === null || Date.now() - last > CONTEST_REFRESH_MS || !c.problems.length) {
+        const info = parseContestInfo(await gateway.contest(base, id));
+        lastContestCheck.current.set(key, Date.now());
+        commit((cur) =>
+          updateContest(cur, key, (x) => {
+            if (x.contestId !== id) return x;
+            const offset = cur.contests.filter((o) => o.key !== key).reduce((a, o) => a + o.problems.length, 0);
+            return {
+              ...x,
+              // Grade vazia + questões visíveis: importa automaticamente (preserva cores já escolhidas).
+              problems: !x.problems.length && info.problems?.length ? buildProblems(key, x.problems, info.problems, offset) : x.problems,
+              contestAccess: info.access ?? (info.openness === 0 ? 'public' : info.problems ? 'authorized' : 'restricted'),
+              contestTitle: info.title || x.contestTitle,
+              begin: info.begin ?? x.begin,
+              length: info.begin && info.end ? info.end - info.begin : x.length,
+            };
+          }),
+        );
+      }
+      const rank = parseRank(await gateway.rank(base, id));
+      if (rank.id && String(rank.id) !== id) throw new Error(`O gateway devolveu o ranking do contest ${rank.id}, diferente do configurado (${id}).`);
+      commit((cur) => {
+        if (findContest(cur, key)?.contestId !== id) return cur; // link trocado durante a leitura
+        const r = withRank(cur, key, rank);
+        return { state: r.state, events: r.events };
+      });
+    },
+    [commit, getState],
+  );
+
   const syncNow = useCallback(
-    async (opts?: { auto?: boolean }) => {
+    async (opts?: { auto?: boolean; contestKey?: string }) => {
       const s = getState();
       const base = gatewayUrl(s);
-      if (!s.vjudge.contestId || !base) {
+      const targets = s.contests.filter((c) => c.contestId && (!opts?.contestKey || c.key === opts.contestKey));
+      if (!targets.length || !base) {
         if (!opts?.auto) notify({ kind: 'error', title: 'Configure o contest e o gateway na tela VJudge.' });
         return false;
       }
       if (busyRef.current) return false;
       busyRef.current = true;
       setBusy(true);
+      let allOk = true;
       try {
-        const id = s.vjudge.contestId;
-        // Metadados do contest (acesso, título, horários, questões): no início e a cada 5 min.
-        if (s.vjudge.contestAccess === null || Date.now() - lastContestCheck.current > CONTEST_REFRESH_MS || !s.problems.length) {
-          const info = parseContestInfo(await gateway.contest(base, id));
-          lastContestCheck.current = Date.now();
-          commit((cur) => ({
-            ...cur,
-            // Grade vazia + questões visíveis: importa automaticamente (preserva cores já escolhidas).
-            problems: !cur.problems.length && info.problems?.length ? buildProblems(cur.problems, info.problems) : cur.problems,
-            vjudge: {
-              ...cur.vjudge,
-              contestAccess: info.access ?? (info.openness === 0 ? 'public' : info.problems ? 'authorized' : 'restricted'),
-              contestTitle: info.title || cur.vjudge.contestTitle,
-              begin: info.begin ?? cur.vjudge.begin,
-              length: info.begin && info.end ? info.end - info.begin : cur.vjudge.length,
-            },
-          }));
+        // Um contest por vez: requisições curtas e sem sobreposição.
+        for (const c of targets) {
+          try {
+            await syncContest(base, c.key);
+          } catch (err) {
+            allOk = false;
+            const msg = err instanceof Error ? err.message : 'Falha desconhecida';
+            const cur = findContest(getState(), c.key);
+            const wasOk = cur?.lastSyncOk !== false;
+            commit((st) => updateContest(st, c.key, (x) => ({ ...x, lastSyncOk: false, lastError: msg, failures: x.failures + 1 })));
+            const label = getState().contests.length > 1 ? ` (${cur?.tag ?? c.tag})` : '';
+            if (!opts?.auto || wasOk) notify({ kind: 'error', title: `Falha ao atualizar do VJudge${label}`, detail: `${msg} Tentando novamente automaticamente.` });
+          }
         }
-        const raw = await gateway.rank(base, id);
-        const rank = parseRank(raw);
-        if (rank.id && String(rank.id) !== getState().vjudge.contestId)
-          throw new Error(`O gateway devolveu o ranking do contest ${rank.id}, diferente do configurado.`);
-        commit((cur) => {
-          const r = withRank(cur, raw);
-          return { state: { ...r.state, vjudge: { ...r.state.vjudge, warning: rankWarning(r.state, rank) } }, events: r.events };
-        });
-        if (!opts?.auto) notify({ kind: 'success', title: 'Ranking atualizado', ttl: 2500 });
-        return true;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Falha desconhecida';
-        const wasOk = getState().vjudge.lastSyncOk !== false;
-        commit((cur) => ({ ...cur, vjudge: { ...cur.vjudge, lastSyncOk: false, lastError: msg, failures: cur.vjudge.failures + 1 } }));
-        if (!opts?.auto || wasOk) notify({ kind: 'error', title: 'Falha ao atualizar do VJudge', detail: `${msg} Tentando novamente automaticamente.` });
-        return false;
+        if (!opts?.auto && allOk) notify({ kind: 'success', title: targets.length > 1 ? `${targets.length} rankings atualizados` : 'Ranking atualizado', ttl: 2500 });
+        return allOk;
       } finally {
         busyRef.current = false;
         setBusy(false);
       }
     },
-    [commit, getState, notify],
+    [commit, getState, notify, syncContest],
   );
 
   const applyPasted = useCallback(
-    (text: string) => {
-      const s = getState();
-      const r = withRank(s, text); // lança erro de parse antes de alterar o estado
-      if (r.rankId && s.vjudge.contestId && String(r.rankId) !== s.vjudge.contestId)
-        throw new Error(`Esse ranking é do contest ${r.rankId}, mas o contest configurado é ${s.vjudge.contestId}.`);
+    (text: string, contestKey?: string) => {
+      const rank = parseRank(text); // lança erro de parse antes de alterar o estado
+      const target = contestForRank(getState(), rank, contestKey);
+      let added = 0;
       commit((cur) => {
-        const again = withRank(cur, text);
-        return { state: again.state, events: again.events };
+        const r = withRank(cur, target.key, rank);
+        added = r.newAccepted;
+        return { state: r.state, events: r.events };
       });
-      return r.newAccepted;
+      return added;
     },
     [commit, getState],
   );
 
   const v = state.vjudge;
   const base = gatewayUrl(state);
-  const pollOn = v.autoPoll && v.source === 'gateway' && !!base && !!v.contestId;
+  const pollOn = v.autoPoll && v.source === 'gateway' && !!base && state.contests.some((c) => c.contestId);
   const interval = Math.max(10, v.pollSeconds || 15);
-  const failures = v.failures;
+  const failures = Math.max(0, ...state.contests.map((c) => c.failures));
+  const syncTick = state.contests.map((c) => c.lastSyncAt ?? 0).join(',');
 
   // Agenda a próxima leitura (setTimeout encadeado: nunca sobrepõe requisições).
   // A primeira leitura da sessão é imediata.
@@ -178,7 +222,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       syncedThisSession.current ? delay * 1000 : 0,
     );
     return () => window.clearTimeout(t);
-  }, [pollOn, interval, failures, v.lastSyncAt, syncNow]);
+  }, [pollOn, interval, failures, syncTick, syncNow]);
 
   // Ao voltar para a aba ou reconectar: atualiza na hora.
   useEffect(() => {

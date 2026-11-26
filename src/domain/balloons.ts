@@ -9,6 +9,7 @@
 import type { AppEvent, AppState, Cell, LogEntry, Placement, Problem, Unit } from './types';
 import { buildUnits } from './teams';
 import { uid } from './ids';
+import { allProblems, findProblem, problemLabel } from './contests';
 
 export type CellStatus = 'idle' | 'solved' | 'delivered';
 
@@ -17,11 +18,11 @@ export function cellStatus(cell: Cell | undefined): CellStatus {
   return cell.deliveredAt !== undefined ? 'delivered' : 'solved';
 }
 
-export function getCell(state: AppState, unitId: string, problem: number): Cell | undefined {
+export function getCell(state: AppState, unitId: string, problem: string): Cell | undefined {
   return state.results[unitId]?.[problem];
 }
 
-function setCell(state: AppState, unitId: string, problem: number, cell: Cell): AppState {
+function setCell(state: AppState, unitId: string, problem: string, cell: Cell): AppState {
   return {
     ...state,
     results: { ...state.results, [unitId]: { ...(state.results[unitId] ?? {}), [problem]: cell } },
@@ -32,19 +33,22 @@ function addLog(state: AppState, kind: LogEntry['kind'], text: string, now: numb
   return { ...state, log: [{ id: uid('log'), at: now, kind, text }, ...state.log].slice(0, 300) };
 }
 
-const letterOf = (state: AppState, problem: number) => state.problems.find((p) => p.index === problem)?.letter ?? `#${problem + 1}`;
+const letterOf = (state: AppState, problem: string) => {
+  const p = findProblem(state, problem);
+  return p ? problemLabel(state, p) : problem;
+};
 const unitName = (state: AppState, unitId: string) => buildUnits(state).find((u) => u.id === unitId)?.name ?? 'Unidade';
 
 /** Marca o balão como entregue. Só é permitido se a questão estiver resolvida. */
-export function deliverBalloon(state: AppState, unitId: string, problem: number, now: number): { state: AppState; events: AppEvent[] } {
+export function deliverBalloon(state: AppState, unitId: string, problem: string, now: number): { state: AppState; events: AppEvent[] } {
   const cell = getCell(state, unitId, problem);
   if (cellStatus(cell) !== 'solved') return { state, events: [] };
   let next = setCell(state, unitId, problem, { ...cell!, deliveredAt: now });
   next = addLog(next, 'delivered', `Balão ${letterOf(state, problem)} entregue para ${unitName(state, unitId)}`, now);
   const events: AppEvent[] = [];
-  const stats = problemStats(next, buildUnits(next)).find((s) => s.index === problem);
+  const stats = problemStats(next, buildUnits(next)).find((s) => s.key === problem);
   if (stats && stats.solved > 0 && stats.pending === 0) {
-    const p = next.problems.find((x) => x.index === problem);
+    const p = findProblem(next, problem);
     events.push({
       id: uid('ev'),
       kind: 'column-done',
@@ -57,7 +61,7 @@ export function deliverBalloon(state: AppState, unitId: string, problem: number,
 }
 
 /** Desfaz a entrega. O registro do Accepted permanece intacto. */
-export function undoDelivery(state: AppState, unitId: string, problem: number, now: number): AppState {
+export function undoDelivery(state: AppState, unitId: string, problem: string, now: number): AppState {
   const cell = getCell(state, unitId, problem);
   if (!cell || cell.deliveredAt === undefined) return state;
   const { deliveredAt: _drop, ...rest } = cell;
@@ -66,7 +70,7 @@ export function undoDelivery(state: AppState, unitId: string, problem: number, n
 }
 
 /** Registro manual de Accepted — útil quando a integração com o VJudge não está disponível. */
-export function markManualSolved(state: AppState, unitId: string, problem: number, now: number): AppState {
+export function markManualSolved(state: AppState, unitId: string, problem: string, now: number): AppState {
   const cell = getCell(state, unitId, problem);
   if (cell?.solvedAt !== undefined) return state;
   let next = setCell(state, unitId, problem, { ...(cell ?? {}), solvedAt: now, detectedAt: now, solvedSource: 'manual' });
@@ -75,7 +79,7 @@ export function markManualSolved(state: AppState, unitId: string, problem: numbe
 }
 
 /** Remove um Accepted manual (nunca remove um Accepted vindo do VJudge nem um balão já entregue). */
-export function removeManualSolved(state: AppState, unitId: string, problem: number, now: number): AppState {
+export function removeManualSolved(state: AppState, unitId: string, problem: string, now: number): AppState {
   const cell = getCell(state, unitId, problem);
   if (!cell || cell.solvedSource !== 'manual' || cell.deliveredAt !== undefined) return state;
   const next = setCell(state, unitId, problem, {});
@@ -88,7 +92,7 @@ export function removeManualSolved(state: AppState, unitId: string, problem: num
 }
 
 export interface ProblemStats {
-  index: number;
+  key: string;
   solved: number;
   delivered: number;
   pending: number;
@@ -96,20 +100,20 @@ export interface ProblemStats {
   firstUnitId?: string;
 }
 
-export function problemStats(state: AppState, units: Unit[]): ProblemStats[] {
-  return state.problems.map((p) => {
+export function problemStats(state: AppState, units: Unit[], problems: Problem[] = allProblems(state)): ProblemStats[] {
+  return problems.map((p) => {
     let solved = 0;
     let delivered = 0;
     let first: { id: string; at: number } | undefined;
     for (const u of units) {
-      const c = state.results[u.id]?.[p.index];
+      const c = state.results[u.id]?.[p.key];
       const st = cellStatus(c);
       if (st === 'idle') continue;
       solved++;
       if (st === 'delivered') delivered++;
       if (c!.solvedSource === 'vjudge' && (!first || c!.solvedAt! < first.at)) first = { id: u.id, at: c!.solvedAt! };
     }
-    return { index: p.index, solved, delivered, pending: solved - delivered, firstUnitId: first?.id };
+    return { key: p.key, solved, delivered, pending: solved - delivered, firstUnitId: first?.id };
   });
 }
 
@@ -121,11 +125,11 @@ export interface QueueItem {
 }
 
 /** Fila de balões pendentes, do Accepted mais antigo para o mais recente. */
-export function balloonQueue(state: AppState, units: Unit[]): QueueItem[] {
+export function balloonQueue(state: AppState, units: Unit[], problems: Problem[] = allProblems(state)): QueueItem[] {
   const out: QueueItem[] = [];
   for (const u of units) {
-    for (const p of state.problems) {
-      const c = state.results[u.id]?.[p.index];
+    for (const p of problems) {
+      const c = state.results[u.id]?.[p.key];
       if (cellStatus(c) === 'solved') out.push({ unit: u, problem: p, cell: c!, placement: state.allocation?.placements[u.id] });
     }
   }
@@ -142,13 +146,13 @@ export interface Overview {
   waitingUnits: number;
 }
 
-export function overview(state: AppState, units: Unit[]): Overview {
-  const stats = problemStats(state, units);
-  const queue = balloonQueue(state, units);
+export function overview(state: AppState, units: Unit[], problems: Problem[] = allProblems(state)): Overview {
+  const stats = problemStats(state, units, problems);
+  const queue = balloonQueue(state, units, problems);
   return {
     participants: state.participants.length,
     teams: state.mode === 'team' ? units.length : 0,
-    problems: state.problems.length,
+    problems: problems.length,
     accepted: stats.reduce((a, s) => a + s.solved, 0),
     delivered: stats.reduce((a, s) => a + s.delivered, 0),
     pending: queue.length,

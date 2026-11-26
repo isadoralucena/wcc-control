@@ -1,6 +1,7 @@
 import type { AppState, LabCatalog, LccLab } from '../domain/types';
 import snapshot from '../data/lcc-snapshot.json';
 import { BUILD_GATEWAY_URL } from '../config';
+import { newContest } from '../domain/contests';
 
 /**
  * Catálogo inicial dos laboratórios: cópia de https://lcc.ufcg.edu.br/
@@ -19,11 +20,12 @@ export function snapshotCatalog(): LabCatalog {
 
 export function defaultState(): AppState {
   return {
-    version: 2,
+    version: 3,
     competitionName: '',
     gatewayUrl: '',
     labCatalog: snapshotCatalog(),
     labSelection: {},
+    customLabs: [],
     participants: [],
     mode: 'individual',
     teamSettings: { size: 3, remainder: 'balance' },
@@ -31,24 +33,12 @@ export function defaultState(): AppState {
     allocationSettings: { maxGap: 2, order: 'list' },
     allocation: null,
     vjudge: {
-      contestInput: '',
-      contestId: '',
-      contestAccess: null,
-      warning: null,
       source: BUILD_GATEWAY_URL ? 'gateway' : 'paste',
       // Liga por padrão: só roda quando houver gateway e contest configurados.
       autoPoll: true,
       pollSeconds: 15,
-      contestTitle: '',
-      begin: null,
-      length: null,
-      lastSyncAt: null,
-      lastSyncOk: null,
-      lastError: null,
-      failures: 0,
-      seenAccounts: [],
     },
-    problems: [],
+    contests: [newContest([])],
     results: {},
     notified: [],
     log: [],

@@ -6,6 +6,10 @@ import snapshot from '../data/lcc-snapshot.json';
 // @ts-expect-error módulo JS do gateway, sem declaração de tipos
 import { parseLcc } from '../../gateway/core.js';
 import { applyRank, parseContestId, parseRank } from './vjudge';
+import { allProblems, newContest, problemKey, removeContest, setContestLink, standings, unitsInContest } from './contests';
+import { buildCustomLab, validateCustomLab } from './customLabs';
+import { hydrate } from '../state/persistence';
+import { roomsOf } from '../state/selectors';
 import { cellStatus, deliverBalloon, markManualSolved, undoDelivery, balloonQueue } from './balloons';
 import { defaultState } from '../state/defaults';
 import { createParticipants } from './participants';
@@ -195,15 +199,23 @@ function contestState(): AppState {
     { name: 'Ana', username: 'ana123' },
     { name: 'Bia', username: 'Bia456' },
   ]);
+  const k = s.contests[0].key;
   return {
     ...s,
     participants,
-    problems: [
-      { index: 0, letter: 'A', title: '', color: '#61D295' },
-      { index: 1, letter: 'B', title: '', color: '#1E88FD' },
+    contests: [
+      {
+        ...s.contests[0],
+        contestId: '1',
+        problems: [
+          { key: problemKey(k, 0), contest: k, index: 0, letter: 'A', title: '', color: '#61D295' },
+          { key: problemKey(k, 1), contest: k, index: 1, letter: 'B', title: '', color: '#1E88FD' },
+        ],
+      },
     ],
   };
 }
+const K = (s: AppState, i: number) => problemKey(s.contests[0].key, i);
 
 describe('balões e sincronização', () => {
   const rank = parseRank({
@@ -222,36 +234,186 @@ describe('balões e sincronização', () => {
 
   it('marca o primeiro Accepted, notifica uma vez e casa username sem diferenciar caixa', () => {
     const s = contestState();
-    const r = applyRank(s, rank, 5);
+    const c = s.contests[0].key;
+    const r = applyRank(s, c, rank, 5);
     const [ana, bia] = s.participants;
-    expect(r.state.results[ana.id][0].solvedAt).toBe(1_000_000 + 50_000);
-    expect(r.state.results[bia.id][1].solvedSource).toBe('vjudge');
+    expect(r.state.results[ana.id][K(s, 0)].solvedAt).toBe(1_000_000 + 50_000);
+    expect(r.state.results[bia.id][K(s, 1)].solvedSource).toBe('vjudge');
     expect(r.events).toHaveLength(2);
-    const again = applyRank(r.state, rank, 6);
+    const again = applyRank(r.state, c, rank, 6);
     expect(again.events).toHaveLength(0);
   });
 
   it('entrega não apaga o Accepted e a sincronização não sobrescreve a entrega', () => {
     const s0 = contestState();
+    const c = s0.contests[0].key;
+    const a = K(s0, 0);
     const [ana] = s0.participants;
-    let s = applyRank(s0, rank, 5).state;
-    s = deliverBalloon(s, ana.id, 0, 100).state;
-    expect(cellStatus(s.results[ana.id][0])).toBe('delivered');
-    expect(s.results[ana.id][0].solvedAt).toBeDefined();
-    s = applyRank(s, rank, 200).state;
-    expect(s.results[ana.id][0].deliveredAt).toBe(100);
-    s = undoDelivery(s, ana.id, 0, 300);
-    expect(cellStatus(s.results[ana.id][0])).toBe('solved');
+    let s = applyRank(s0, c, rank, 5).state;
+    s = deliverBalloon(s, ana.id, a, 100).state;
+    expect(cellStatus(s.results[ana.id][a])).toBe('delivered');
+    expect(s.results[ana.id][a].solvedAt).toBeDefined();
+    s = applyRank(s, c, rank, 200).state;
+    expect(s.results[ana.id][a].deliveredAt).toBe(100);
+    s = undoDelivery(s, ana.id, a, 300);
+    expect(cellStatus(s.results[ana.id][a])).toBe('solved');
     expect(balloonQueue(s, buildUnits(s)).length).toBe(2);
   });
 
   it('não permite entregar balão de questão não resolvida; AC manual vira vjudge depois', () => {
     const s0 = contestState();
+    const a = K(s0, 0);
     const [ana] = s0.participants;
-    expect(deliverBalloon(s0, ana.id, 0, 1).state).toBe(s0);
-    let s = markManualSolved(s0, ana.id, 0, 1);
-    expect(s.results[ana.id][0].solvedSource).toBe('manual');
-    s = applyRank(s, rank, 2).state;
-    expect(s.results[ana.id][0].solvedSource).toBe('vjudge');
+    expect(deliverBalloon(s0, ana.id, a, 1).state).toBe(s0);
+    let s = markManualSolved(s0, ana.id, a, 1);
+    expect(s.results[ana.id][a].solvedSource).toBe('manual');
+    s = applyRank(s, s0.contests[0].key, rank, 2).state;
+    expect(s.results[ana.id][a].solvedSource).toBe('vjudge');
+  });
+});
+
+describe('vários contests', () => {
+  /** Dois contests (divisões): Ana no C1, Bia no C2, mesma questão de índice 0 nos dois. */
+  function twoContests(): AppState {
+    const s = contestState();
+    const c2 = { ...newContest(s.contests), contestId: '2' };
+    c2.problems = [{ key: problemKey(c2.key, 0), contest: c2.key, index: 0, letter: 'A', title: '', color: '#F2545B' }];
+    return { ...s, contests: [...s.contests, c2] };
+  }
+  const r1 = parseRank({ id: 1, begin: 0, participants: { 1: { name: 'ana123' } }, submissions: [[1, 0, 1, 120]] });
+  const r2 = parseRank({ id: 2, begin: 0, participants: { 7: { name: 'bia456' } }, submissions: [[7, 0, 1, 60]] });
+
+  it('mantém resultados separados por contest, mesmo com o mesmo índice de questão', () => {
+    const s0 = twoContests();
+    const [c1, c2] = s0.contests;
+    let s = applyRank(s0, c1.key, r1, 5).state;
+    s = applyRank(s, c2.key, r2, 6).state;
+    const [ana, bia] = s.participants;
+    expect(Object.keys(s.results[ana.id])).toEqual([problemKey(c1.key, 0)]);
+    expect(Object.keys(s.results[bia.id])).toEqual([problemKey(c2.key, 0)]);
+    expect(allProblems(s)).toHaveLength(3);
+    expect(s.contests[1].seenAccounts).toEqual(['bia456']);
+  });
+
+  it('identifica quem participa de cada contest pelas contas vistas no ranking', () => {
+    const s0 = twoContests();
+    const [c1, c2] = s0.contests;
+    let s = applyRank(s0, c1.key, r1, 5).state;
+    s = applyRank(s, c2.key, r2, 6).state;
+    s = { ...s, contests: s.contests.map((c) => ({ ...c, lastSyncAt: 1 })) };
+    const us = buildUnits(s);
+    expect(unitsInContest(s, s.contests[0], us).map((u) => u.name)).toEqual(['Ana']);
+    expect(unitsInContest(s, s.contests[1], us).map((u) => u.name)).toEqual(['Bia']);
+    // antes da primeira leitura, todos aparecem
+    expect(unitsInContest(s0, s0.contests[1], us)).toHaveLength(2);
+  });
+
+  it('notificação mostra a sigla do contest quando há mais de um', () => {
+    const s0 = twoContests();
+    const r = applyRank(s0, s0.contests[1].key, r2, 5);
+    expect(r.events[0].title).toContain('C2·A');
+  });
+
+  it('remover ou trocar o link de um contest apaga só os resultados dele', () => {
+    const s0 = twoContests();
+    const [c1, c2] = s0.contests;
+    let s = applyRank(s0, c1.key, r1, 5).state;
+    s = applyRank(s, c2.key, r2, 6).state;
+    const [ana, bia] = s.participants;
+    const removed = removeContest(s, c2.key);
+    expect(removed.contests).toHaveLength(1);
+    expect(removed.results[bia.id]).toEqual({});
+    expect(removed.results[ana.id][problemKey(c1.key, 0)].solvedAt).toBeDefined();
+    expect(removed.notified.some((n) => n.includes(c2.key))).toBe(false);
+    const switched = setContestLink(s, c1.key, '999', '999');
+    expect(switched.results[ana.id]).toEqual({});
+    expect(switched.contests[0]).toMatchObject({ contestId: '999', problems: [], lastSyncAt: null });
+    expect(switched.results[bia.id][problemKey(c2.key, 0)].solvedAt).toBeDefined();
+  });
+
+  it('classificação: mais resolvidas e, no empate, menor soma de tempos', () => {
+    const s0 = contestState();
+    const c = s0.contests[0].key;
+    const rank = parseRank({
+      id: 1,
+      begin: 60_000,
+      participants: { 1: { name: 'ana123' }, 2: { name: 'bia456' } },
+      submissions: [
+        [1, 0, 1, 600],
+        [2, 0, 1, 300],
+      ],
+    });
+    const s = applyRank({ ...s0, contests: [{ ...s0.contests[0], begin: 60_000 }] }, c, rank, 1).state;
+    const st = standings(s, buildUnits(s), allProblems(s));
+    const [ana, bia] = s.participants;
+    expect(st.get(bia.id)).toMatchObject({ position: 1, solved: 1, minutes: 5 });
+    expect(st.get(ana.id)).toMatchObject({ position: 2, minutes: 10 });
+  });
+
+  it('migra o estado v2 (um contest, resultados por índice) sem perder Accepted nem entregas', () => {
+    const v2 = {
+      version: 2,
+      gatewayUrl: 'https://gw.example',
+      participants: [{ id: 'p1', name: 'Ana', vjudge: 'ana123' }],
+      vjudge: { contestInput: '870484', contestId: '870484', contestTitle: 'WCC', source: 'gateway', autoPoll: true, pollSeconds: 20, contestAccess: 'public' },
+      problems: [{ index: 0, letter: 'A', title: '', color: '#123456' }],
+      results: { p1: { 0: { solvedAt: 10, solvedSource: 'vjudge', deliveredAt: 20 } } },
+      notified: ['p1:0'],
+    };
+    const s = hydrate(v2);
+    const k = s.contests[0].key;
+    expect(s.version).toBe(3);
+    expect(s.contests).toHaveLength(1);
+    expect(s.contests[0]).toMatchObject({ contestId: '870484', contestTitle: 'WCC', contestAccess: 'public' });
+    expect(s.contests[0].problems[0]).toMatchObject({ key: problemKey(k, 0), color: '#123456' });
+    expect(s.results.p1[problemKey(k, 0)]).toMatchObject({ solvedAt: 10, deliveredAt: 20 });
+    expect(s.notified).toEqual([`p1:${problemKey(k, 0)}`]);
+    expect(s.vjudge).toEqual({ source: 'gateway', autoPoll: true, pollSeconds: 20 });
+    expect(hydrate(JSON.parse(JSON.stringify(s)))).toMatchObject({ contests: s.contests, results: s.results });
+  });
+});
+
+describe('laboratórios personalizados', () => {
+  const spec = { id: 'SALA1', name: 'Sala 1', machines: 20, benches: 4, orientation: 'h' as const, paired: false, door: 'front-left' as const };
+
+  it('gera a planta com a quantidade exata de computadores, corredores e porta', () => {
+    const lab = buildCustomLab(spec);
+    const ids = lab.cells.flat().flatMap((c) => (c && typeof c === 'object' ? [c.id] : []));
+    expect(ids).toHaveLength(20);
+    expect(new Set(ids).size).toBe(20);
+    expect(ids[0]).toBe('SALA1-01');
+    expect(lab.cells[0][0]).toBe('door');
+    expect(lab.rows).toBe(1 + 4 + 3); // porta + 4 bancadas + 3 corredores
+    const room = { ...lab, selected: true, excluded: [] };
+    expect(benchesOf(room)).toHaveLength(4);
+    expect(benchesOf(room).every((b) => b.length === 5)).toBe(true);
+  });
+
+  it('corredores verticais viram bancadas em colunas; pares dividem o corredor', () => {
+    const lab = buildCustomLab({ ...spec, orientation: 'v', paired: true, door: 'back-right', machines: 22 });
+    const room = { ...lab, selected: true, excluded: [] };
+    expect(orientationOf(room)).toBe('v');
+    expect(benchesOf(room).map((b) => b.length)).toEqual([6, 6, 6, 4]);
+    expect(lab.cols).toBe(4 + 1); // 4 bancadas, 1 corredor entre os pares
+    expect(lab.cells[lab.rows - 1][lab.cols - 1]).toBe('door');
+  });
+
+  it('é alocado junto com os laboratórios do LCC e respeita equipes', () => {
+    const s = { ...defaultState(), customLabs: [spec], labSelection: { SALA1: { selected: true, excluded: [] }, LCC1: { selected: true, excluded: [] } } };
+    const rooms = roomsOf(s).filter((r) => r.selected);
+    expect(rooms.map((r) => r.id).sort()).toEqual(['LCC1', 'SALA1']);
+    const r = computeAllocation(rooms, units(10, 3), { maxGap: 1, order: 'list' });
+    expect(r.report.ok).toBe(true);
+    const sala = Object.values(r.placements).filter((p) => p.labId === 'SALA1');
+    expect(sala.length).toBeGreaterThan(0);
+    const benches = benchesOf(rooms.find((x) => x.id === 'SALA1')!);
+    for (const p of sala) expect(benches.some((b) => p.seats.every((x) => b.includes(x)))).toBe(true);
+  });
+
+  it('valida sigla repetida e quantidades', () => {
+    expect(validateCustomLab(spec, ['LCC1'])).toEqual([]);
+    expect(validateCustomLab(spec, ['sala1']).join()).toMatch(/Já existe/);
+    expect(validateCustomLab({ ...spec, benches: 30 }, []).join()).toMatch(/bancadas/);
+    expect(validateCustomLab({ ...spec, machines: 0 }, []).length).toBeGreaterThan(0);
   });
 });
